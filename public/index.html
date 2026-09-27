@@ -29,7 +29,7 @@
       text-align: center;
       max-width: 90%;
     }
-    /* Start overlay: ensures browser grants permissions and unlocks audio/video */
+    /* Start overlay to unlock browser autoplay and permission policies */
     #startOverlay {
       position: fixed;
       inset: 0;
@@ -121,8 +121,21 @@
       startOverlay.style.display = 'none';
 
       try {
-        setStatus("Starting camera...");
-        localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+        setStatus("Starting camera in HD...");
+
+        // Request Full HD (1080p) video and audio enhancements
+        localStream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            width: { ideal: 1920 },
+            height: { ideal: 1080 },
+            frameRate: { ideal: 30 }
+          },
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true
+          }
+        });
+
         localVideo.srcObject = localStream;
         await localVideo.play();
         initPeer();
@@ -133,7 +146,6 @@
     });
 
     function initPeer() {
-      // Configuration including TURNS over port 443 TCP to bypass corporate firewalls
       peer = new Peer({
         config: {
           iceServers: [
@@ -210,6 +222,28 @@
     });
 
     function setupStreamHandling(call) {
+      // Allocate high bitrate (up to 2.5 Mbps) for crisp 1080p streaming
+      setTimeout(() => {
+        try {
+          if (call.peerConnection) {
+            const videoSender = call.peerConnection
+              .getSenders()
+              .find(s => s.track && s.track.kind === 'video');
+
+            if (videoSender) {
+              const params = videoSender.getParameters();
+              if (!params.encodings || params.encodings.length === 0) {
+                params.encodings = [{}];
+              }
+              params.encodings[0].maxBitrate = 2500000; // 2.5 Mbps
+              videoSender.setParameters(params);
+            }
+          }
+        } catch (e) {
+          console.log("Bitrate boost notice:", e);
+        }
+      }, 1000);
+
       call.on('stream', (incomingStream) => {
         remoteVideo.srcObject = incomingStream;
         remoteVideo.play()
