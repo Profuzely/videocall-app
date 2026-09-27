@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Instant 1-to-1 Video Call</title>
+  <style>
+    body {
+      margin: 0;
+      background: #111;
+      color: #fff;
+      font-family: system-ui, -apple-system, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      overflow: hidden;
+    }
+    #status {
+      position: absolute;
+      top: 15px;
+      background: rgba(0, 0, 0, 0.7);
+      padding: 8px 18px;
+      border-radius: 20px;
+      font-size: 14px;
+      z-index: 10;
+    }
+    .video-container {
+      position: relative;
+      width: 100vw;
+      height: 100vh;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+    /* Remote video takes full screen */
+    #remoteVideo {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      background: #222;
+    }
+    /* Your own video sits in the bottom-right corner */
+    #localVideo {
+      position: absolute;
+      bottom: 20px;
+      right: 20px;
+      width: 180px;
+      height: 120px;
+      object-fit: cover;
+      border-radius: 12px;
+      border: 2px solid #555;
+      background: #000;
+      transform: scaleX(-1); /* mirror preview */
+    }
+  </style>
+
+  <!-- Load PeerJS and Socket.io -->
+  <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+  <script src="/socket.io/socket.io.js"></script>
+</head>
+<body>
+
+  <div id="status">Starting camera...</div>
+
+  <div class="video-container">
+    <video id="remoteVideo" autoplay playsinline></video>
+    <video id="localVideo" autoplay playsinline muted></video>
+  </div>
+
+  <script>
+    const statusText = document.getElementById('status');
+    const localVideo = document.getElementById('localVideo');
+    const remoteVideo = document.getElementById('remoteVideo');
+
+    let localStream;
+    const socket = io();
+    const peer = new Peer();
+
+    // 1. Get access to camera and microphone
+    navigator.mediaDevices.getUserMedia({ video: true, audio: true })
+      .then((stream) => {
+        localStream = stream;
+        localVideo.srcObject = stream;
+        statusText.innerText = "Connecting to matchmaking server...";
+
+        // 2. Once PeerJS gives us an ID, notify the server
+        peer.on('open', (id) => {
+          socket.emit('join', id);
+        });
+      })
+      .catch((err) => {
+        statusText.innerText = "Error: Please allow camera and mic permissions.";
+        console.error(err);
+      });
+
+    // 3. Handle status updates from the server
+    socket.on('waiting', () => {
+      statusText.innerText = "Waiting for the other person to open the link...";
+    });
+
+    // 4. Server says: "Another person is here! Call them."
+    socket.on('match', ({ peerToCall }) => {
+      statusText.innerText = "Partner found! Connecting call...";
+      const call = peer.call(peerToCall, localStream);
+      
+      call.on('stream', (incomingStream) => {
+        remoteVideo.srcObject = incomingStream;
+        statusText.innerText = "Connected!";
+      });
+    });
+
+    // 5. Answer calls when receiving them
+    peer.on('call', (call) => {
+      statusText.innerText = "Answering incoming call...";
+      call.answer(localStream);
+
+      call.on('stream', (incomingStream) => {
+        remoteVideo.srcObject = incomingStream;
+        statusText.innerText = "Connected!";
+      });
+    });
+  </script>
+</body>
+</html>
