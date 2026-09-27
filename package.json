@@ -1,0 +1,13 @@
+{
+  "name": "auto-video-call",
+  "version": "1.0.0",
+  "description": "Auto 1-to-1 video calling with PeerJS",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "socket.io": "^4.7.5"
+  }
+}
