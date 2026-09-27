@@ -79,14 +79,37 @@
     let myPeerId = null;
 
     const socket = io();
-    const peer = new Peer();
+
+    // Configure STUN and TURN relay servers to punch through firewalls and mobile NAT
+    const peer = new Peer({
+      config: {
+        iceServers: [
+          { urls: 'stun:stun.l.google.com:19302' },
+          { urls: 'stun:openrelay.metered.ca:80' },
+          {
+            urls: 'turn:openrelay.metered.ca:80',
+            username: 'openrelayproject',
+            credential: 'openrelayproject',
+          },
+          {
+            urls: 'turn:openrelay.metered.ca:443',
+            username: 'openrelayproject',
+            credential: 'openrelayproject',
+          },
+          {
+            urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+            username: 'openrelayproject',
+            credential: 'openrelayproject',
+          },
+        ]
+      }
+    });
 
     function setStatus(msg) {
       statusText.innerText = msg;
       console.log(msg);
     }
 
-    // Helper: Join matchmaking only when BOTH camera and PeerJS ID are ready
     function tryJoinMatchmaking() {
       if (myPeerId && localStream && socket.connected) {
         setStatus("Finding a partner...");
@@ -94,7 +117,13 @@
       }
     }
 
-    // 1. Handle PeerJS connection
+    function handleIncomingStream(stream) {
+      remoteVideo.srcObject = stream;
+      remoteVideo.play().catch(e => console.log("Autoplay retry:", e));
+      setStatus("Connected! Video live.");
+    }
+
+    // 1. Peer ready
     peer.on('open', (id) => {
       myPeerId = id;
       tryJoinMatchmaking();
@@ -105,22 +134,18 @@
       setStatus("PeerJS Error: " + err.type);
     });
 
-    // 2. Handle Socket.io connection to Render
+    // 2. Socket ready
     socket.on('connect', () => {
       tryJoinMatchmaking();
     });
 
-    socket.on('connect_error', () => {
-      setStatus("Could not connect to matchmaking server. Retrying...");
-    });
-
-    // 3. Request camera and microphone
+    // 3. Camera ready
     setStatus("Requesting camera & microphone access...");
     navigator.mediaDevices.getUserMedia({ video: true, audio: true })
       .then((stream) => {
         localStream = stream;
         localVideo.srcObject = stream;
-        setStatus("Camera active. Connecting...");
+        setStatus("Camera ready. Connecting...");
         tryJoinMatchmaking();
       })
       .catch((err) => {
@@ -138,24 +163,22 @@
       const call = peer.call(peerToCall, localStream);
       
       call.on('stream', (incomingStream) => {
-        remoteVideo.srcObject = incomingStream;
-        setStatus("Connected!");
+        handleIncomingStream(incomingStream);
       });
 
       call.on('error', (err) => {
         console.error(err);
-        setStatus("Call error occurred.");
+        setStatus("Call failed to connect.");
       });
     });
 
     // 5. Answer incoming calls
     peer.on('call', (call) => {
-      setStatus("Partner connected! Streaming...");
+      setStatus("Answering call...");
       call.answer(localStream);
 
       call.on('stream', (incomingStream) => {
-        remoteVideo.srcObject = incomingStream;
-        setStatus("Connected!");
+        handleIncomingStream(incomingStream);
       });
     });
   </script>
