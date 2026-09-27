@@ -7,7 +7,7 @@
   <style>
     body {
       margin: 0;
-      background: #111;
+      background: #000;
       color: #fff;
       font-family: system-ui, -apple-system, sans-serif;
       display: flex;
@@ -20,20 +20,30 @@
     #status {
       position: absolute;
       top: 15px;
-      background: rgba(0, 0, 0, 0.75);
+      background: rgba(0, 0, 0, 0.8);
       border: 1px solid #444;
-      padding: 10px 20px;
+      padding: 8px 18px;
       border-radius: 20px;
-      font-size: 14px;
+      font-size: 13px;
       z-index: 10;
       text-align: center;
-      max-width: 90%;
     }
-    /* Start overlay to unlock browser autoplay and permission policies */
+    #statsBadge {
+      position: absolute;
+      bottom: 20px;
+      left: 20px;
+      background: rgba(0, 0, 0, 0.75);
+      border: 1px solid #333;
+      padding: 6px 12px;
+      border-radius: 8px;
+      font-size: 12px;
+      font-family: monospace;
+      z-index: 10;
+    }
     #startOverlay {
       position: fixed;
       inset: 0;
-      background: rgba(0, 0, 0, 0.9);
+      background: rgba(0, 0, 0, 0.95);
       display: flex;
       flex-direction: column;
       align-items: center;
@@ -61,28 +71,28 @@
       display: flex;
       justify-content: center;
       align-items: center;
+      background: #050505;
     }
+    /* contain keeps native aspect ratio and avoids blurry digital zoom */
     #remoteVideo {
       width: 100%;
       height: 100%;
-      object-fit: cover;
-      background: #1a1a1a;
+      object-fit: contain;
     }
     #localVideo {
       position: absolute;
       bottom: 20px;
       right: 20px;
-      width: 180px;
-      height: 120px;
+      width: 200px;
+      height: 130px;
       object-fit: cover;
-      border-radius: 12px;
-      border: 2px solid #555;
-      background: #000;
+      border-radius: 10px;
+      border: 2px solid #444;
+      background: #111;
       transform: scaleX(-1);
     }
   </style>
 
-  <!-- Load PeerJS and Socket.io -->
   <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
   <script src="/socket.io/socket.io.js"></script>
 </head>
@@ -94,6 +104,7 @@
   </div>
 
   <div id="status">Waiting to start...</div>
+  <div id="statsBadge">Resolution: checking...</div>
 
   <div class="video-container">
     <video id="remoteVideo" autoplay playsinline></video>
@@ -102,6 +113,7 @@
 
   <script>
     const statusText = document.getElementById('status');
+    const statsBadge = document.getElementById('statsBadge');
     const localVideo = document.getElementById('localVideo');
     const remoteVideo = document.getElementById('remoteVideo');
     const startOverlay = document.getElementById('startOverlay');
@@ -121,13 +133,13 @@
       startOverlay.style.display = 'none';
 
       try {
-        setStatus("Starting camera in HD...");
+        setStatus("Requesting maximum camera resolution...");
 
-        // Request Full HD (1080p) video and audio enhancements
+        // Request clean HD feed
         localStream = await navigator.mediaDevices.getUserMedia({
           video: {
-            width: { ideal: 1920 },
-            height: { ideal: 1080 },
+            width: { min: 1280, ideal: 1920 },
+            height: { min: 720, ideal: 1080 },
             frameRate: { ideal: 30 }
           },
           audio: {
@@ -136,12 +148,22 @@
           }
         });
 
+        // Tell browser to prioritize fine visual detail over aggressive compression
+        const videoTrack = localStream.getVideoTracks()[0];
+        if (videoTrack && 'contentHint' in videoTrack) {
+          videoTrack.contentHint = 'detail';
+        }
+
         localVideo.srcObject = localStream;
         await localVideo.play();
+
+        const s = videoTrack.getSettings();
+        statsBadge.innerText = `Camera capturing: ${s.width}x${s.height}`;
+
         initPeer();
       } catch (err) {
         console.error(err);
-        setStatus("Error: Camera or mic permission denied.");
+        setStatus("Error accessing camera. Check permissions.");
       }
     });
 
@@ -149,10 +171,7 @@
       peer = new Peer({
         config: {
           iceServers: [
-            // Standard STUN
             { urls: 'stun:stun.relay.metered.ca:80' },
-
-            // Standard TURN (UDP)
             {
               urls: 'turn:relay.metered.ca:80',
               username: 'REPLACE_WITH_YOUR_METERED_USERNAME',
@@ -163,15 +182,11 @@
               username: 'REPLACE_WITH_YOUR_METERED_USERNAME',
               credential: 'REPLACE_WITH_YOUR_METERED_CREDENTIAL',
             },
-
-            // TURN over TCP (bypasses UDP blocks on corporate networks)
             {
               urls: 'turn:relay.metered.ca:443?transport=tcp',
               username: 'REPLACE_WITH_YOUR_METERED_USERNAME',
               credential: 'REPLACE_WITH_YOUR_METERED_CREDENTIAL',
             },
-
-            // TURNS over TLS/SSL (encrypted on Port 443, looks like normal HTTPS traffic)
             {
               urls: 'turns:relay.metered.ca:443?transport=tcp',
               username: 'REPLACE_WITH_YOUR_METERED_USERNAME',
@@ -191,7 +206,6 @@
         setStatus("PeerJS Error: " + err.type);
       });
 
-      // Handle receiving incoming call
       peer.on('call', (call) => {
         setStatus("Answering call...");
         call.answer(localStream);
@@ -201,7 +215,7 @@
 
     function tryJoinMatchmaking() {
       if (myPeerId && localStream && socket.connected) {
-        setStatus("Waiting for the other person to open the link...");
+        setStatus("Waiting for partner...");
         socket.emit('join', myPeerId);
       }
     }
@@ -211,43 +225,55 @@
     });
 
     socket.on('waiting', () => {
-      setStatus("Waiting for the other person to open the link...");
+      setStatus("Waiting for partner to join...");
     });
 
-    // Make outgoing call
     socket.on('match', ({ peerToCall }) => {
-      setStatus("Partner found! Dialing...");
+      setStatus("Partner found! Connecting...");
       const call = peer.call(peerToCall, localStream);
       setupStreamHandling(call);
     });
 
     function setupStreamHandling(call) {
-      // Allocate high bitrate (up to 2.5 Mbps) for crisp 1080p streaming
+      // Force WebRTC to keep full resolution and allocate high bitrate
       setTimeout(() => {
         try {
           if (call.peerConnection) {
-            const videoSender = call.peerConnection
-              .getSenders()
-              .find(s => s.track && s.track.kind === 'video');
+            const senders = call.peerConnection.getSenders();
+            const videoSender = senders.find(s => s.track && s.track.kind === 'video');
 
             if (videoSender) {
               const params = videoSender.getParameters();
               if (!params.encodings || params.encodings.length === 0) {
                 params.encodings = [{}];
               }
-              params.encodings[0].maxBitrate = 2500000; // 2.5 Mbps
+
+              // 1. Maintain resolution even if network fluctuates (no auto-blur)
+              params.degradationPreference = 'maintain-resolution';
+
+              // 2. Allow up to 3.5 Mbps for crisp HD
+              params.encodings[0].maxBitrate = 3500000;
+
               videoSender.setParameters(params);
             }
           }
         } catch (e) {
-          console.log("Bitrate boost notice:", e);
+          console.log("Optimization notice:", e);
         }
       }, 1000);
 
       call.on('stream', (incomingStream) => {
         remoteVideo.srcObject = incomingStream;
         remoteVideo.play()
-          .then(() => setStatus("Connected! Video is live."))
+          .then(() => {
+            setStatus("Connected! Video live.");
+            // Update stats badge with actual incoming stream dimensions
+            const track = incomingStream.getVideoTracks()[0];
+            if (track) {
+              const settings = track.getSettings();
+              statsBadge.innerText = `Live Stream: ${settings.width || 'HD'}x${settings.height || ''}`;
+            }
+          })
           .catch(e => console.log("Playback retry:", e));
       });
 
